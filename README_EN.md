@@ -123,6 +123,7 @@ ESP_Bridge/
 ├── README.md               ← German documentation
 ├── README_EN.md            ← This file (English documentation)
 ├── test_bridge.py          ← Automated test and pairing script (Python)
+├── arduino_tests/          ← Arduino Uno example tests via the ESP32 bridge
 ├── include/
 │   └── config.h            ← All constants and pin definitions
 └── src/
@@ -423,6 +424,15 @@ ET+SAVE
 ## 14. Automated Test Script
 
 The included Python script `test_bridge.py` connects to both modules simultaneously via USB-Serial, reads boot output, performs the pairing procedure automatically, and verifies the connection.
+
+### Arduino Uno Hardware Tests
+
+Additionally, `arduino_tests/` contains two manual Arduino test setups:
+
+- `arduino_tests/uart_test/`: Uno A ↔ ESP A and Uno B ↔ ESP B in **UART mode** (`ComMode=1`, Uno side using `SoftwareSerial`)
+- `arduino_tests/i2c_test/`: Uno A ↔ ESP A and Uno B ↔ ESP B in **I2C mode** (`ComMode=2`, bridge registers `0x01`/`0x02`)
+
+Important: the Unos are **not connected directly** to each other; communication is routed only through the two ESP32 bridge modules.
 
 ### Prerequisites
 
