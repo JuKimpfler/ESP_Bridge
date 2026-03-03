@@ -20,9 +20,10 @@
 10. [LED-Verhalten](#10-led-verhalten)
 11. [Leistung & Timing](#11-leistung--timing)
 12. [Dual-Port-Betrieb](#12-dual-port-betrieb)
-13. [Automatisches Test-Skript](#13-automatisches-test-skript)
-14. [Hinweise & Besonderheiten](#14-hinweise--besonderheiten)
-15. [Fehlerbehebung](#15-fehlerbehebung)
+13. [I2C-Slave-Modus](#13-i2c-slave-modus)
+14. [Automatisches Test-Skript](#14-automatisches-test-skript)
+15. [Hinweise & Besonderheiten](#15-hinweise--besonderheiten)
+16. [Fehlerbehebung](#16-fehlerbehebung)
 
 ---
 
@@ -56,7 +57,7 @@ Gerät A ◄─(UART 115200)── ESP32-C3 [A] ◄─(ESP-NOW 2.4 GHz)── ES
 
 | Eigenschaft              | Wert                                       |
 |--------------------------|--------------------------------------------|
-| Firmware-Version         | v1.1                                       |
+| Firmware-Version         | v1.2                                       |
 | Protokoll                | ESP-NOW (IEEE 802.11, kein Router nötig)   |
 | Reichweite               | ~100 m (Freifeld), ~20–50 m (Gebäude)     |
 | UART-Baudrate            | 115200 Baud                                |
@@ -68,6 +69,7 @@ Gerät A ◄─(UART 115200)── ESP32-C3 [A] ◄─(ESP-NOW 2.4 GHz)── ES
 | ESP-NOW-Reinit-Timeout   | 30 s (komplette Neuinitialisierung)        |
 | Einstellungsspeicher     | NVS (internes Flash, kein ext. EEPROM)     |
 | Dual-Port                | Ja (USB-CDC + HW-UART gleichwertig)        |
+| Kommunikations-Modus     | UART (Standard) oder I2C-Slave             |
 | Debug-Modus              | Ja (umschaltbar per `ET+DEBUG`)            |
 
 ---
@@ -89,6 +91,8 @@ Gerät A ◄─(UART 115200)── ESP32-C3 [A] ◄─(ESP-NOW 2.4 GHz)── ES
 
 | GPIO  | Bezeichnung  | Funktion                                      |
 |-------|--------------|-----------------------------------------------|
+| **6** | D4 / I2C-SDA | I2C-Slave Datenleitung (nur im I2C-Modus)     |
+| **7** | D5 / I2C-SCL | I2C-Slave Taktleitung (nur im I2C-Modus)      |
 | **9** | D9 / BOOT    | LED Verbindungsstatus ⚠️ siehe Hinweis         |
 | **10**| D10          | LED Setup-Modus                               |
 | **20**| D7 / UART-RX | Hardware-UART Empfang (von externem Gerät)    |
@@ -230,6 +234,8 @@ Format: `ET+BEFEHL` – Zeilenendzeichen: `\n` oder `\r\n`
 | `ET+PEER=AA:BB:CC:DD:EE:FF`  | ✓           | Peer-MAC manuell eingeben                             |
 | `ET+PEER?`                   | ✓           | Gespeicherte Peer-MAC auslesen                        |
 | `ET+CHANNEL=N`               | ✓           | WiFi-Kanal setzen (1–13, wirkt nach Neustart)         |
+| `ET+ComMode=N`               | ✓           | Kommunikations-Modus setzen (1=UART, 2=I2C-Slave)    |
+| `ET+I2CAddr=0xNN`            | ✓           | I2C-Slave-Adresse setzen (Hex, wirkt nach Neustart)   |
 | `ET+RESET`                   | ✓           | Peer-MAC und alle Einstellungen löschen               |
 | `ET+SAVE`                    | ✓           | Einstellungen im Flash speichern & Setup beenden      |
 
@@ -263,11 +269,12 @@ ET+SELECT=1
 
 ET+STATUS?
 === ESP-NOW UART Bridge - Status ===
-  Firmware:      v1.1
+  Firmware:      v1.2
   Eigene MAC:    34:94:54:AB:CD:EF
   Peer MAC:      34:94:54:11:22:33
   Verbunden:     NEIN
   Modus:         SETUP
+  ComMode:       UART
   WiFi-Kanal:    6
   UART Baud:     115200
   Debug:         AUS
@@ -349,6 +356,10 @@ Externe Quelle sendet 20 Byte alle 10 ms:
 | `ESPNOW_SEND_RETRIES`      | 3         | Wiederholungen bei Sendefehler             |
 | `RECONNECT_INTERVAL_MS`    | 5000 ms   | Intervall für Peer-Neuregistrierung        |
 | `ESPNOW_REINIT_TIMEOUT_MS` | 30000 ms  | Timeout für komplette ESP-NOW-Neuinit.     |
+| `I2C_SDA_PIN`              | 6         | SDA-Pin für I2C-Slave (D4)                 |
+| `I2C_SCL_PIN`              | 7         | SCL-Pin für I2C-Slave (D5)                 |
+| `I2C_BUFFER_SIZE`          | 10 B      | I2C-Datenpuffer (feste Paketgröße)         |
+| `I2C_DEFAULT_ADDR`         | 0xEE      | Standard-I2C-Slave-Adresse (8-Bit)         |
 
 ---
 
@@ -368,7 +379,46 @@ Das bedeutet: Ein angeschlossenes Gerät kann `ET+`-Befehle direkt über die Har
 
 ---
 
-## 13. Automatisches Test-Skript
+## 13. I2C-Slave-Modus
+
+Ab Firmware v1.2 unterstützt die Bridge neben dem Standard-UART-Betrieb auch einen **I2C-Slave-Modus**. In diesem Modus werden Daten nicht über die Hardware-UART-Pins, sondern über eine I2C-Schnittstelle (GPIO 6 = SDA, GPIO 7 = SCL) empfangen und gesendet.
+
+### Anwendungsfall
+
+Der I2C-Slave-Modus eignet sich, wenn ein Mikrocontroller (z. B. Arduino) keine freie UART-Schnittstelle hat, aber I2C verfügbar ist. Der ESP32-C3 verhält sich dann als I2C-Slave:
+
+- **Master → Slave (Register 0x01):** Der Master schreibt bis zu 10 Byte, die sofort per ESP-NOW zum anderen Modul übertragen werden.
+- **Slave → Master (Register 0x02):** Der Master liest die letzten 10 Byte, die vom anderen Modul empfangen wurden.
+
+### I2C-Modus aktivieren
+
+```
+ET+OPEN
+ET+ComMode=2
+ET+I2CAddr=0x42   (optional, Standard: 0xEE als 8-Bit-Adresse → 7-Bit: 0x77)
+ET+SAVE
+```
+
+Nach dem Neustart ist I2C aktiv. USB-Serial steht weiterhin für Befehle und Debug-Ausgaben zur Verfügung, überträgt aber keine Bridge-Daten.
+
+### I2C-Registerbelegung
+
+| Register | Richtung       | Beschreibung                                  |
+|----------|----------------|-----------------------------------------------|
+| `0x01`   | Master → Slave | Master schreibt 10 Byte → wird per ESP-NOW gesendet |
+| `0x02`   | Slave → Master | Master liest 10 Byte ← zuletzt empfangene Daten |
+
+### Zurück zum UART-Modus
+
+```
+ET+OPEN
+ET+ComMode=1
+ET+SAVE
+```
+
+---
+
+## 14. Automatisches Test-Skript
 
 Das enthaltene Python-Skript `test_bridge.py` verbindet sich mit beiden Modulen gleichzeitig über USB-Serial, liest Boot-Ausgaben aus, führt das Pairing automatisch durch und verifiziert die Verbindung.
 
@@ -400,7 +450,7 @@ python test_bridge.py
 
 ---
 
-## 14. Hinweise & Besonderheiten
+## 15. Hinweise & Besonderheiten
 
 ### GPIO 9 = BOOT-Taste
 Der XIAO ESP32-C3 hat auf GPIO 9 den eingebauten BOOT-Button. Eine LED daran **stört den Normalbetrieb nicht**, kann aber beim Flashen (wenn GPIO 9 gedrückt gehalten wird) zu Problemen führen. Im Zweifelsfall den LED-Vorwiderstand vor dem Flashen kurz unterbrechen.
@@ -425,7 +475,7 @@ Der Debug-Modus kann jederzeit mit `ET+DEBUG` umgeschaltet werden (auch im norma
 
 ---
 
-## 15. Fehlerbehebung
+## 16. Fehlerbehebung
 
 | Problem                              | Mögliche Ursache                         | Lösung                                            |
 |--------------------------------------|------------------------------------------|---------------------------------------------------|

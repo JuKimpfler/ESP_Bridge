@@ -20,9 +20,10 @@
 10. [LED Behavior](#10-led-behavior)
 11. [Performance & Timing](#11-performance--timing)
 12. [Dual-Port Operation](#12-dual-port-operation)
-13. [Automated Test Script](#13-automated-test-script)
-14. [Notes & Particularities](#14-notes--particularities)
-15. [Troubleshooting](#15-troubleshooting)
+13. [I2C Slave Mode](#13-i2c-slave-mode)
+14. [Automated Test Script](#14-automated-test-script)
+15. [Notes & Particularities](#15-notes--particularities)
+16. [Troubleshooting](#16-troubleshooting)
 
 ---
 
@@ -56,7 +57,7 @@ Device A ◄─(UART 115200)── ESP32-C3 [A] ◄─(ESP-NOW 2.4 GHz)── ES
 
 | Feature                   | Value                                          |
 |---------------------------|------------------------------------------------|
-| Firmware version          | v1.1                                           |
+| Firmware version          | v1.2                                           |
 | Protocol                  | ESP-NOW (IEEE 802.11, no router required)      |
 | Range                     | ~100 m (open space), ~20–50 m (indoors)        |
 | UART baud rate            | 115200 baud                                    |
@@ -68,6 +69,7 @@ Device A ◄─(UART 115200)── ESP32-C3 [A] ◄─(ESP-NOW 2.4 GHz)── ES
 | ESP-NOW re-init timeout   | 30 s (full re-initialization)                  |
 | Settings storage          | NVS (internal flash, no external EEPROM)       |
 | Dual-port                 | Yes (USB-CDC + HW-UART fully equivalent)       |
+| Communication mode        | UART (default) or I2C slave                    |
 | Debug mode                | Yes (toggle with `ET+DEBUG`)                   |
 
 ---
@@ -89,6 +91,8 @@ Device A ◄─(UART 115200)── ESP32-C3 [A] ◄─(ESP-NOW 2.4 GHz)── ES
 
 | GPIO  | Label        | Function                                        |
 |-------|--------------|-------------------------------------------------|
+| **6** | D4 / I2C-SDA | I2C slave data line (I2C mode only)             |
+| **7** | D5 / I2C-SCL | I2C slave clock line (I2C mode only)            |
 | **9** | D9 / BOOT    | Connection status LED ⚠️ see note below          |
 | **10**| D10          | Setup mode LED                                  |
 | **20**| D7 / UART-RX | Hardware UART receive (from external device)    |
@@ -230,6 +234,8 @@ Format: `ET+COMMAND` — line ending: `\n` or `\r\n`
 | `ET+PEER=AA:BB:CC:DD:EE:FF`  | ✓              | Set peer MAC address manually                           |
 | `ET+PEER?`                   | ✓              | Read the stored peer MAC address                        |
 | `ET+CHANNEL=N`               | ✓              | Set Wi-Fi channel (1–13, takes effect after restart)    |
+| `ET+ComMode=N`               | ✓              | Set communication mode (1=UART, 2=I2C slave)            |
+| `ET+I2CAddr=0xNN`            | ✓              | Set I2C slave address (hex, takes effect after restart) |
 | `ET+RESET`                   | ✓              | Delete peer MAC address and all settings                |
 | `ET+SAVE`                    | ✓              | Save settings to flash and exit setup mode              |
 
@@ -263,11 +269,12 @@ ET+SELECT=1
 
 ET+STATUS?
 === ESP-NOW UART Bridge - Status ===
-  Firmware:      v1.1
+  Firmware:      v1.2
   Eigene MAC:    34:94:54:AB:CD:EF
   Peer MAC:      34:94:54:11:22:33
   Verbunden:     NEIN
   Modus:         SETUP
+  ComMode:       UART
   WiFi-Kanal:    6
   UART Baud:     115200
   Debug:         AUS
@@ -351,6 +358,10 @@ External source sends 20 bytes every 10 ms:
 | `ESPNOW_SEND_RETRIES`      | 3          | Retries on send failure                          |
 | `RECONNECT_INTERVAL_MS`    | 5000 ms    | Interval for peer re-registration attempts       |
 | `ESPNOW_REINIT_TIMEOUT_MS` | 30000 ms   | Timeout for full ESP-NOW re-initialization       |
+| `I2C_SDA_PIN`              | 6          | SDA pin for I2C slave (D4)                       |
+| `I2C_SCL_PIN`              | 7          | SCL pin for I2C slave (D5)                       |
+| `I2C_BUFFER_SIZE`          | 10 B       | I2C data buffer (fixed packet size)              |
+| `I2C_DEFAULT_ADDR`         | 0xEE       | Default I2C slave address (8-bit)                |
 
 ---
 
@@ -370,7 +381,46 @@ This means a connected device can send `ET+` commands directly over the hardware
 
 ---
 
-## 13. Automated Test Script
+## 13. I2C Slave Mode
+
+Starting with firmware v1.2, the bridge supports an **I2C slave mode** in addition to the standard UART operation. In this mode, data is exchanged via the I2C interface (GPIO 6 = SDA, GPIO 7 = SCL) instead of the hardware UART pins.
+
+### Use Case
+
+The I2C slave mode is useful when a microcontroller (e.g. Arduino) has no free UART interface but I2C is available. The ESP32-C3 then acts as an I2C slave:
+
+- **Master → Slave (register 0x01):** The master writes up to 10 bytes, which are immediately forwarded via ESP-NOW to the other module.
+- **Slave → Master (register 0x02):** The master reads the last 10 bytes that were received from the other module.
+
+### Activating I2C Mode
+
+```
+ET+OPEN
+ET+ComMode=2
+ET+I2CAddr=0x42   (optional, default: 0xEE as 8-bit address → 7-bit: 0x77)
+ET+SAVE
+```
+
+After restarting, I2C mode is active. USB-Serial remains available for commands and debug output but does not carry bridge data.
+
+### I2C Register Map
+
+| Register | Direction      | Description                                              |
+|----------|----------------|----------------------------------------------------------|
+| `0x01`   | Master → Slave | Master writes 10 bytes → sent via ESP-NOW               |
+| `0x02`   | Slave → Master | Master reads 10 bytes ← last data received from peer    |
+
+### Returning to UART Mode
+
+```
+ET+OPEN
+ET+ComMode=1
+ET+SAVE
+```
+
+---
+
+## 14. Automated Test Script
 
 The included Python script `test_bridge.py` connects to both modules simultaneously via USB-Serial, reads boot output, performs the pairing procedure automatically, and verifies the connection.
 
@@ -402,7 +452,7 @@ python test_bridge.py
 
 ---
 
-## 14. Notes & Particularities
+## 15. Notes & Particularities
 
 ### GPIO 9 = BOOT Button
 The XIAO ESP32-C3 has its built-in BOOT button on GPIO 9. An LED connected here **does not interfere with normal operation**, but may cause problems during flashing if GPIO 9 is held high by an external circuit. If in doubt, disconnect the LED's series resistor before flashing and reconnect it afterwards.
@@ -427,7 +477,7 @@ Debug mode can be toggled at any time using `ET+DEBUG` — even during normal op
 
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 | Problem                               | Possible Cause                             | Solution                                                       |
 |---------------------------------------|--------------------------------------------|----------------------------------------------------------------|
