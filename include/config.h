@@ -69,3 +69,9 @@
 //  Heartbeat
 // ------------------------------------------------------------
 #define HEARTBEAT_INTERVAL_MS   1000    // Alle 1 s einen Heartbeat senden
+
+// ------------------------------------------------------------
+//  Reconnect
+// ------------------------------------------------------------
+#define RECONNECT_INTERVAL_MS   5000    // Alle 5 s Peer-Neuregistrierung bei Trennung
+#define ESPNOW_REINIT_TIMEOUT_MS 30000  // ESP-NOW komplett neu initialisieren nach 30 s Trennung

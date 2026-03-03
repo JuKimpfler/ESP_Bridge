@@ -66,6 +66,10 @@ uint8_t  g_sendFailCount  = 0;     // Aufeinanderfolgende Sendefehler
 // --- Heartbeat ---
 uint32_t g_lastHeartbeatMs = 0;
 
+// --- Reconnect ---
+uint32_t g_lastReconnectMs    = 0;  // Letzter Peer-Neuregistrierungsversuch
+uint32_t g_disconnectedSinceMs = 0; // Zeitpunkt des letzten Verbindungsverlusts
+
 // --- LED ---
 uint32_t g_lastLedBlinkMs  = 0;
 bool     g_ledBlinkState   = false;
@@ -167,7 +171,14 @@ void onDataSent(const uint8_t *mac, esp_now_send_status_t status) {
         if (g_sendFailCount >= SEND_FAIL_THRESHOLD) {
             if (g_peerConnected) {
                 g_peerConnected = false;
+                g_disconnectedSinceMs = millis();
+                g_lastReconnectMs = 0;  // Sofortigen Reconnect-Versuch erzwingen
                 Serial.println(F("[WARN] Mehrere Sendefehler → VERBINDUNG VERLOREN"));
+                // Peer sofort neu registrieren
+                if (g_peerStored) {
+                    removeEspNowPeer(g_peerMac);
+                    addEspNowPeer(g_peerMac);
+                }
             }
         }
     }
@@ -641,8 +652,43 @@ void checkConnectionTimeout() {
     if (!g_peerConnected) return;
     if (millis() - g_lastRxMs > MAX_IDLE_MS) {
         g_peerConnected = false;
+        g_sendFailCount = 0;
+        g_disconnectedSinceMs = millis();
+        g_lastReconnectMs = 0;  // Sofortigen Reconnect-Versuch erzwingen
         Serial.println(F("[WARN] Timeout: kein Signal → VERBINDUNG VERLOREN"));
+        // Peer sofort neu registrieren für ersten Reconnect-Versuch
+        if (g_peerStored) {
+            removeEspNowPeer(g_peerMac);
+            addEspNowPeer(g_peerMac);
+        }
     }
+}
+
+// ============================================================
+//  Reconnect-Versuch (periodisch solange getrennt)
+// ============================================================
+void tryReconnect() {
+    if (g_peerConnected || !g_peerStored || g_setupMode) return;
+    uint32_t now = millis();
+    if (now - g_lastReconnectMs < RECONNECT_INTERVAL_MS) return;
+    g_lastReconnectMs = now;
+
+    // Nach längerem Ausfall ESP-NOW komplett neu initialisieren
+    if (now - g_disconnectedSinceMs >= ESPNOW_REINIT_TIMEOUT_MS) {
+        Serial.println(F("[INFO] Verbindung lange unterbrochen – ESP-NOW wird neu initialisiert..."));
+        esp_now_deinit();
+        delay(100);
+        initEspNow();
+        addEspNowPeer(g_peerMac);
+        g_disconnectedSinceMs = now;  // Timer zurücksetzen
+        return;
+    }
+
+    // Peer neu registrieren und erneuten Heartbeat anstoßen
+    removeEspNowPeer(g_peerMac);
+    addEspNowPeer(g_peerMac);
+    g_lastHeartbeatMs = 0;  // Sofortigen Heartbeat erzwingen
+    Serial.println(F("[INFO] Peer neu registriert – Verbindungsversuch..."));
 }
 
 // ============================================================
@@ -751,8 +797,13 @@ void loop() {
     //  NORMALER BETRIEB: UART → ESP-NOW
     // -------------------------------------------------------
     if (!g_setupMode) {
-        // Hardware-UART-Eingang puffern
-        while (Serial1.available() && g_uartBufLen < UART_RX_BUF_SIZE) {
+        // Hardware-UART-Eingang puffern (bei Überlauf alte Daten verwerfen)
+        while (Serial1.available()) {
+            if (g_uartBufLen >= UART_RX_BUF_SIZE) {
+                // Puffer voll: alten Inhalt verwerfen, neueste Daten bevorzugen
+                g_uartBufLen = 0;
+                Serial.println(F("[WARN] UART-Puffer überlauf – alte Daten verworfen"));
+            }
             g_uartBuf[g_uartBufLen++] = (uint8_t)Serial1.read();
         }
 
@@ -781,6 +832,7 @@ void loop() {
         // Heartbeat und Timeout-Überwachung
         sendHeartbeat();
         checkConnectionTimeout();
+        tryReconnect();
     }
 
     // -------------------------------------------------------
