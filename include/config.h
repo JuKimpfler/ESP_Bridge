@@ -48,12 +48,30 @@
 #define CMD_BUF_SIZE        128         // Kommandopuffer (USB-Serial)
 
 // ------------------------------------------------------------
+//  I2C Slave Einstellungen
+// ------------------------------------------------------------
+#define I2C_SDA_PIN         6           // SDA Pin (D4 auf XIAO ESP32-C3)
+#define I2C_SCL_PIN         7           // SCL Pin (D5 auf XIAO ESP32-C3)
+#define I2C_BUFFER_SIZE     10          // 10-Byte Puffer fuer I2C Daten
+#define I2C_DEFAULT_ADDR    0xEE        // Standard I2C-Slave-Adresse
+#define I2C_REG_WRITE       0x01        // Register: Master schreibt 10 Byte
+#define I2C_REG_READ        0x02        // Register: Master liest 10 Byte
+
+// ------------------------------------------------------------
+//  Kommunikations-Modus
+// ------------------------------------------------------------
+#define COM_MODE_UART       1           // UART-Modus (Standard)
+#define COM_MODE_I2C        2           // I2C-Slave-Modus
+
+// ------------------------------------------------------------
 //  NVS / Preferences  (internes EEPROM-Ersatz)
 // ------------------------------------------------------------
 #define NVS_NAMESPACE       "espbridge"
 #define NVS_KEY_PEER_MAC    "peer_mac"
 #define NVS_KEY_CHANNEL     "channel"
 #define NVS_KEY_BAUD        "uart_baud"
+#define NVS_KEY_COM_MODE    "com_mode"
+#define NVS_KEY_I2C_ADDR    "i2c_addr"
 
 // ------------------------------------------------------------
 //  Paket-Typen

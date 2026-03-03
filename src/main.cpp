@@ -26,6 +26,7 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <Preferences.h>
+#include <Wire.h>
 #include "config.h"
 
 // ============================================================
@@ -89,6 +90,16 @@ bool     g_ledBlinkState   = false;
 
 // --- Sequenznummer ---
 uint16_t g_txSeq = 0;
+
+// --- Kommunikations-Modus ---
+uint8_t  g_comMode  = COM_MODE_UART;    // 1=UART, 2=I2C
+uint8_t  g_i2cAddr  = I2C_DEFAULT_ADDR; // I2C-Slave-Adresse
+
+// --- I2C-Puffer ---
+volatile uint8_t  g_i2cBuffer[I2C_BUFFER_SIZE] = {0};
+volatile uint8_t  g_i2cRegister  = 0;         // Aktuelles Register (0x01 oder 0x02)
+volatile bool     g_i2cNewData   = false;      // Flag: neue Daten per I2C empfangen
+uint8_t           g_i2cSendBuf[I2C_BUFFER_SIZE] = {0}; // Kopie fuer ESP-NOW Versand
 
 // --- Setup-Modus ---
 uint32_t g_lastScanBcastMs = 0;
@@ -155,13 +166,22 @@ bool strToMac(const char *str, uint8_t *mac) {
 /** Gibt den aktuellen Status aus (auf beide Ausgaenge) */
 void printStatus() {
     cmdPrintln(F("=== ESP-NOW UART Bridge - Status ==="));
-    cmdPrint  (F("  Firmware:      ")); cmdPrintln(F("v1.1"));
+    cmdPrint  (F("  Firmware:      ")); cmdPrintln(F("v1.2"));
     cmdPrint  (F("  Eigene MAC:    ")); cmdPrintln(macToStr(g_myMac));
     cmdPrint  (F("  Peer MAC:      "));
     if (g_peerStored) cmdPrintln(macToStr(g_peerMac));
     else              cmdPrintln(F("(nicht gesetzt)"));
     cmdPrint  (F("  Verbunden:     ")); cmdPrintln(g_peerConnected ? F("JA") : F("NEIN"));
     cmdPrint  (F("  Modus:         ")); cmdPrintln(g_setupMode     ? F("SETUP") : F("NORMAL"));
+    cmdPrint  (F("  ComMode:       "));
+    if (g_comMode == COM_MODE_I2C) {
+        cmdPrint(F("I2C (Addr: 0x"));
+        if (g_i2cAddr < 0x10) cmdPrint('0');
+        cmdPrint(g_i2cAddr, HEX);
+        cmdPrintln(F(")"));
+    } else {
+        cmdPrintln(F("UART"));
+    }
     cmdPrint  (F("  WiFi-Kanal:    ")); cmdPrintln(ESPNOW_CHANNEL);
     cmdPrint  (F("  UART Baud:     ")); cmdPrintln(HW_UART_BAUD);
     cmdPrint  (F("  Debug:         ")); cmdPrintln(g_debugMode     ? F("AN") : F("AUS"));
@@ -239,9 +259,30 @@ void onDataRecv(const uint8_t *mac, const uint8_t *inData, int len) {
     // --------------------------------------------------------
     if (pkt->type == PKT_DATA) {
         if (pkt->dataLen > 0 && pkt->dataLen <= ESPNOW_MAX_PAYLOAD) {
-            // Bridge-Daten auf beide Ausgaenge schreiben
-            Serial.write(pkt->data, pkt->dataLen);
-            Serial1.write(pkt->data, pkt->dataLen);
+
+            if (g_comMode == COM_MODE_I2C) {
+                // I2C-Modus: letzte 10 Byte in I2C-Puffer schreiben
+                uint16_t copyLen = min((uint16_t)I2C_BUFFER_SIZE, pkt->dataLen);
+                uint16_t offset  = (pkt->dataLen > I2C_BUFFER_SIZE) ? (pkt->dataLen - I2C_BUFFER_SIZE) : 0;
+                memcpy((uint8_t*)g_i2cBuffer, pkt->data + offset, copyLen);
+
+                // Debug-Ausgabe auf USB (nur Anzeige, kein Senden)
+                if (g_debugMode) {
+                    Serial.print(F("[RX ESP-NOW->I2C] "));
+                    Serial.print(pkt->dataLen);
+                    Serial.print(F(" B -> Buffer: "));
+                    for (uint8_t i = 0; i < I2C_BUFFER_SIZE; i++) {
+                        if (g_i2cBuffer[i] < 0x10) Serial.print('0');
+                        Serial.print(g_i2cBuffer[i], HEX);
+                        Serial.print(' ');
+                    }
+                    Serial.println();
+                }
+            } else {
+                // UART-Modus: Bridge-Daten auf beide Ausgaenge schreiben
+                Serial.write(pkt->data, pkt->dataLen);
+                Serial1.write(pkt->data, pkt->dataLen);
+            }
 
             // Debug: Hex-Dump (nur bei aktivem Debug-Modus)
             if (g_debugMode) {
@@ -338,6 +379,87 @@ void onDataRecv(const uint8_t *mac, const uint8_t *inData, int len) {
 }
 
 // ============================================================
+//  I2C Slave Callbacks
+// ============================================================
+
+/** I2C Empfangs-Callback (Master -> Slave) */
+void onI2CReceive(int numBytes) {
+    if (numBytes < 1) return;
+
+    uint8_t reg = Wire.read();
+    numBytes--;
+
+    if (reg == I2C_REG_WRITE) {
+        // Master schreibt 10 Byte
+        uint8_t idx = 0;
+        while (Wire.available() && idx < I2C_BUFFER_SIZE) {
+            g_i2cBuffer[idx++] = Wire.read();
+        }
+        // Restliche Bytes verwerfen
+        while (Wire.available()) Wire.read();
+        g_i2cNewData = true;
+
+        if (g_debugMode) {
+            Serial.print(F("[I2C RX] 0x01 Write "));
+            Serial.print(idx);
+            Serial.print(F(" B: "));
+            for (uint8_t i = 0; i < I2C_BUFFER_SIZE; i++) {
+                if (g_i2cBuffer[i] < 0x10) Serial.print('0');
+                Serial.print(g_i2cBuffer[i], HEX);
+                Serial.print(' ');
+            }
+            Serial.println();
+        }
+    } else if (reg == I2C_REG_READ) {
+        // Register fuer naechsten Request setzen
+        g_i2cRegister = I2C_REG_READ;
+        // Restliche Bytes verwerfen
+        while (Wire.available()) Wire.read();
+    } else {
+        // Unbekanntes Register
+        while (Wire.available()) Wire.read();
+    }
+}
+
+/** I2C Request-Callback (Slave -> Master) */
+void onI2CRequest() {
+    // Immer 10 Byte aus dem Buffer zurueckgeben
+    Wire.write((uint8_t*)g_i2cBuffer, I2C_BUFFER_SIZE);
+
+    if (g_debugMode) {
+        Serial.print(F("[I2C TX] 0x02 Read "));
+        Serial.print(I2C_BUFFER_SIZE);
+        Serial.print(F(" B: "));
+        for (uint8_t i = 0; i < I2C_BUFFER_SIZE; i++) {
+            if (g_i2cBuffer[i] < 0x10) Serial.print('0');
+            Serial.print(g_i2cBuffer[i], HEX);
+            Serial.print(' ');
+        }
+        Serial.println();
+    }
+}
+
+/** I2C Slave initialisieren */
+void initI2CSlave() {
+    // I2C-Adresse: Wenn > 0x77, als 8-Bit Adresse interpretieren (>> 1)
+    uint8_t addr7bit = g_i2cAddr;
+    if (addr7bit > 0x77) {
+        addr7bit = addr7bit >> 1;
+    }
+    Wire.begin((int)addr7bit, I2C_SDA_PIN, I2C_SCL_PIN, 0);
+    Wire.onReceive(onI2CReceive);
+    Wire.onRequest(onI2CRequest);
+    Serial.print(F("[I2C] Slave initialisiert auf Adresse 0x"));
+    Serial.print(g_i2cAddr, HEX);
+    if (g_i2cAddr > 0x77) {
+        Serial.print(F(" (7-Bit: 0x"));
+        Serial.print(addr7bit, HEX);
+        Serial.print(F(")"));
+    }
+    Serial.println();
+}
+
+// ============================================================
 //  ESP-NOW initialisieren
 // ============================================================
 void initEspNow() {
@@ -377,6 +499,12 @@ void loadSettings() {
     } else {
         dbgPrintln(F("[NVS] Kein Peer gespeichert."));
     }
+    if (prefs.isKey(NVS_KEY_COM_MODE)) {
+        g_comMode = prefs.getUChar(NVS_KEY_COM_MODE, COM_MODE_UART);
+    }
+    if (prefs.isKey(NVS_KEY_I2C_ADDR)) {
+        g_i2cAddr = prefs.getUChar(NVS_KEY_I2C_ADDR, I2C_DEFAULT_ADDR);
+    }
     prefs.end();
 }
 
@@ -385,6 +513,8 @@ void saveSettings() {
     if (g_peerStored) {
         prefs.putBytes(NVS_KEY_PEER_MAC, g_peerMac, 6);
     }
+    prefs.putUChar(NVS_KEY_COM_MODE, g_comMode);
+    prefs.putUChar(NVS_KEY_I2C_ADDR, g_i2cAddr);
     prefs.end();
     cmdPrintln(F("[NVS] Einstellungen gespeichert."));
 }
@@ -396,6 +526,8 @@ void clearSettings() {
     memset(g_peerMac, 0, 6);
     g_peerStored    = false;
     g_peerConnected = false;
+    g_comMode       = COM_MODE_UART;
+    g_i2cAddr       = I2C_DEFAULT_ADDR;
     cmdPrintln(F("[NVS] Alle Einstellungen geloescht."));
 }
 
@@ -420,6 +552,8 @@ void enterSetupMode() {
     cmdPrintln(F("  ET+MAC?          - Eigene MAC anzeigen"));
     cmdPrintln(F("  ET+STATUS?       - Vollstaendigen Status anzeigen"));
     cmdPrintln(F("  ET+CHANNEL=N     - WiFi-Kanal setzen (1-13, Neustart)"));
+    cmdPrintln(F("  ET+ComMode=N     - Komm.-Modus (1=UART, 2=I2C)"));
+    cmdPrintln(F("  ET+I2CAddr=0xNN  - I2C-Adresse setzen (Hex)"));
     cmdPrintln(F("  ET+RESET         - Peer-Einstellungen loeschen"));
     cmdPrintln(F("  ET+SAVE          - Speichern & Setup beenden"));
     cmdPrintln(F("  ET+Debug         - Debug-Ausgaben umschalten"));
@@ -630,6 +764,45 @@ void processCommand(const char *rawCmd) {
         exitSetupMode();
     }
 
+    // ---- ET+ComMode=N ----
+    else if (strncasecmp(body, "ComMode=", 8) == 0) {
+        int mode = atoi(body + 8);
+        if (mode == COM_MODE_UART || mode == COM_MODE_I2C) {
+            g_comMode = (uint8_t)mode;
+            cmdPrint(F("[SETUP] ComMode gesetzt: "));
+            if (g_comMode == COM_MODE_I2C) {
+                cmdPrintln(F("I2C"));
+                cmdPrintln(F("[INFO] I2C-Modus wird nach ET+SAVE/Neustart aktiv."));
+                cmdPrintln(F("[INFO] USB dient dann nur als Debug/Setup-Anzeige."));
+            } else {
+                cmdPrintln(F("UART"));
+            }
+            cmdPrintln(F("[SETUP] Zum Speichern: ET+SAVE"));
+        } else {
+            cmdPrintln(F("[CMD] Ungueltiger Modus. 1=UART, 2=I2C"));
+        }
+    }
+
+    // ---- ET+I2CAddr=0xNN ----
+    else if (strncasecmp(body, "I2CAddr=", 8) == 0) {
+        const char *addrStr = body + 8;
+        unsigned int addr = 0;
+        // Akzeptiere sowohl "0xNN" als auch "NN" (hex)
+        if (addrStr[0] == '0' && (addrStr[1] == 'x' || addrStr[1] == 'X')) {
+            sscanf(addrStr + 2, "%x", &addr);
+        } else {
+            sscanf(addrStr, "%x", &addr);
+        }
+        if (addr >= 0x08 && addr <= 0xFE) {
+            g_i2cAddr = (uint8_t)addr;
+            cmdPrint(F("[SETUP] I2C-Adresse gesetzt: 0x"));
+            cmdPrintln(g_i2cAddr, HEX);
+            cmdPrintln(F("[SETUP] Zum Speichern: ET+SAVE"));
+        } else {
+            cmdPrintln(F("[CMD] Ungueltige I2C-Adresse. Bereich: 0x08-0xFE"));
+        }
+    }
+
     // ---- Unbekannt ----
     else {
         cmdPrint(F("[CMD] Unbekannter Befehl: "));
@@ -836,23 +1009,38 @@ void setup() {
     digitalWrite(PIN_LED_CONNECTED, LOW);
     digitalWrite(PIN_LED_SETUP,     LOW);
 
-    // Hardware-UART initialisieren
-    Serial1.begin(HW_UART_BAUD, SERIAL_8N1, HW_UART_RX_PIN, HW_UART_TX_PIN);
+    // Einstellungen aus NVS laden (vor UART/I2C Init, da ComMode benoetigt)
+    loadSettings();
+
+    // Hardware-UART initialisieren (nur im UART-Modus)
+    if (g_comMode == COM_MODE_UART) {
+        Serial1.begin(HW_UART_BAUD, SERIAL_8N1, HW_UART_RX_PIN, HW_UART_TX_PIN);
+    }
 
     // Debug-Meldungen beim Start (nur sichtbar wenn Debug aktiv)
     dbgPrintln();
     dbgPrintln(F("========================================="));
-    dbgPrintln(F("  ESP32-C3 UART-Bridge via ESP-NOW v1.1"));
+    dbgPrintln(F("  ESP32-C3 UART-Bridge via ESP-NOW v1.2"));
     dbgPrintln(F("========================================="));
-    dbgPrintln(F("[INFO] Hardware-UART (Serial1) bereit"));
-    dbgPrint  (F("[INFO] RX: GPIO")); dbgPrint  (HW_UART_RX_PIN);
-    dbgPrint  (F("  TX: GPIO"));      dbgPrintln(HW_UART_TX_PIN);
 
-    // Einstellungen aus NVS laden
-    loadSettings();
+    if (g_comMode == COM_MODE_I2C) {
+        Serial.println(F("[INFO] Kommunikations-Modus: I2C"));
+        Serial.print  (F("[INFO] I2C-Adresse: 0x"));
+        Serial.println(g_i2cAddr, HEX);
+        Serial.println(F("[INFO] USB dient nur als Debug/Setup-Anzeige."));
+    } else {
+        dbgPrintln(F("[INFO] Hardware-UART (Serial1) bereit"));
+        dbgPrint  (F("[INFO] RX: GPIO")); dbgPrint  (HW_UART_RX_PIN);
+        dbgPrint  (F("  TX: GPIO"));      dbgPrintln(HW_UART_TX_PIN);
+    }
 
     // ESP-NOW starten
     initEspNow();
+
+    // I2C Slave initialisieren (wenn I2C-Modus)
+    if (g_comMode == COM_MODE_I2C) {
+        initI2CSlave();
+    }
 
     // Gespeicherten Peer hinzufuegen
     if (g_peerStored) {
@@ -872,14 +1060,20 @@ void setup() {
 // ============================================================
 void loop() {
     // -------------------------------------------------------
-    //  Eingaben von USB-Serial und HW-UART gleichermassen lesen
+    //  USB-Serial immer lesen (fuer Befehle / Setup)
     // -------------------------------------------------------
     readInputStream(Serial,  g_usbCmdBuf, g_usbCmdLen, g_usbCmdLastMs);
-    readInputStream(Serial1, g_hwCmdBuf,  g_hwCmdLen,  g_hwCmdLastMs);
+
+    // HW-UART nur im UART-Modus lesen
+    if (g_comMode == COM_MODE_UART) {
+        readInputStream(Serial1, g_hwCmdBuf,  g_hwCmdLen,  g_hwCmdLastMs);
+    }
 
     // Kommandopuffer-Timeout (falls ET+ Praefix ohne Zeilenende)
     flushStaleCmdBuf(g_usbCmdBuf, g_usbCmdLen, g_usbCmdLastMs);
-    flushStaleCmdBuf(g_hwCmdBuf,  g_hwCmdLen,  g_hwCmdLastMs);
+    if (g_comMode == COM_MODE_UART) {
+        flushStaleCmdBuf(g_hwCmdBuf,  g_hwCmdLen,  g_hwCmdLastMs);
+    }
 
     // -------------------------------------------------------
     //  Scan verarbeiten (laeuft im Hintergrund)
@@ -887,37 +1081,69 @@ void loop() {
     processScan();
 
     // -------------------------------------------------------
-    //  NORMALER BETRIEB: Bridge-Puffer -> ESP-NOW
+    //  NORMALER BETRIEB
     // -------------------------------------------------------
     if (!g_setupMode) {
-        // Bridge-Puffer Ueberlauf vermeiden
-        if (g_bridgeBufLen >= UART_RX_BUF_SIZE) {
-            g_bridgeBufLen = 0;
-            dbgPrintln(F("[WARN] Bridge-Puffer Ueberlauf - alte Daten verworfen"));
-        }
 
-        // Puffer mit Sendeintervall absenden
-        uint32_t now = millis();
-        if (g_bridgeBufLen > 0 && (now - g_lastSendMs >= SEND_INTERVAL_MS)) {
-            g_lastSendMs = now;
-
-            // Debug: Hex-Dump der gesendeten Daten
-            if (g_debugMode) {
-                dbgPrint(F("[TX->ESP-NOW] "));
-                dbgPrint(g_bridgeBufLen);
-                dbgPrint(F(" B: "));
-                uint16_t showLen = min((uint16_t)16, g_bridgeBufLen);
-                for (uint16_t i = 0; i < showLen; i++) {
-                    if (g_bridgeBuf[i] < 0x10) dbgPrint('0');
-                    dbgPrint(g_bridgeBuf[i], HEX);
-                    dbgPrint(' ');
+        if (g_comMode == COM_MODE_I2C) {
+            // I2C-Modus: Daten aus USB werden NICHT gesendet (nur Anzeige/Setup)
+            // Stattdessen Bridge-Puffer verwerfen (USB-Daten ignorieren)
+            if (g_bridgeBufLen > 0) {
+                if (g_debugMode) {
+                    Serial.print(F("[I2C-MODE] USB-Daten verworfen ("));
+                    Serial.print(g_bridgeBufLen);
+                    Serial.println(F(" B) - Senden nur per I2C moeglich."));
                 }
-                if (g_bridgeBufLen > 16) dbgPrint(F("..."));
-                dbgPrintln();
+                g_bridgeBufLen = 0;
             }
 
-            sendEspNow(g_bridgeBuf, g_bridgeBufLen);
-            g_bridgeBufLen = 0;
+            // I2C empfangene Daten sofort per ESP-NOW weiterleiten
+            if (g_i2cNewData) {
+                g_i2cNewData = false;
+                memcpy(g_i2cSendBuf, (const uint8_t*)g_i2cBuffer, I2C_BUFFER_SIZE);
+
+                if (g_debugMode) {
+                    Serial.print(F("[I2C->ESP-NOW] "));
+                    Serial.print(I2C_BUFFER_SIZE);
+                    Serial.print(F(" B: "));
+                    for (uint8_t i = 0; i < I2C_BUFFER_SIZE; i++) {
+                        if (g_i2cSendBuf[i] < 0x10) Serial.print('0');
+                        Serial.print(g_i2cSendBuf[i], HEX);
+                        Serial.print(' ');
+                    }
+                    Serial.println();
+                }
+
+                sendEspNow(g_i2cSendBuf, I2C_BUFFER_SIZE);
+            }
+        } else {
+            // UART-Modus: Bridge-Puffer -> ESP-NOW (wie bisher)
+            if (g_bridgeBufLen >= UART_RX_BUF_SIZE) {
+                g_bridgeBufLen = 0;
+                dbgPrintln(F("[WARN] Bridge-Puffer Ueberlauf - alte Daten verworfen"));
+            }
+
+            uint32_t now = millis();
+            if (g_bridgeBufLen > 0 && (now - g_lastSendMs >= SEND_INTERVAL_MS)) {
+                g_lastSendMs = now;
+
+                if (g_debugMode) {
+                    dbgPrint(F("[TX->ESP-NOW] "));
+                    dbgPrint(g_bridgeBufLen);
+                    dbgPrint(F(" B: "));
+                    uint16_t showLen = min((uint16_t)16, g_bridgeBufLen);
+                    for (uint16_t i = 0; i < showLen; i++) {
+                        if (g_bridgeBuf[i] < 0x10) dbgPrint('0');
+                        dbgPrint(g_bridgeBuf[i], HEX);
+                        dbgPrint(' ');
+                    }
+                    if (g_bridgeBufLen > 16) dbgPrint(F("..."));
+                    dbgPrintln();
+                }
+
+                sendEspNow(g_bridgeBuf, g_bridgeBufLen);
+                g_bridgeBufLen = 0;
+            }
         }
 
         // Heartbeat und Timeout-Ueberwachung
