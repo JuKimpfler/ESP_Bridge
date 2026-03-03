@@ -1,8 +1,8 @@
 // ============================================================
-//  I2C Test – Uno A (über ESP32 Bridge, I2C-Modus)
+//  I2C Test – Uno A / Sender (über ESP32 Bridge, I2C-Modus)
 //  ============================================================
-//  Dieser Uno ist I2C-Master und spricht mit seinem lokalen
-//  ESP32-C3 (Bridge-Modul A) als I2C-Slave:
+//  Dieser Uno ist I2C-Controller und spricht mit seinem lokalen
+//  ESP32-C3 (Bridge-Modul A) als I2C-Peripheral:
 //    Uno A A4 (SDA)  -> ESP A GPIO6 (SDA)
 //    Uno A A5 (SCL)  -> ESP A GPIO7 (SCL)
 //    Uno A GND       -> ESP A GND
@@ -28,7 +28,7 @@ uint16_t cycleCount = 0;
 const uint8_t PAYLOAD_LEN = 10;
 
 void setup() {
-    Wire.begin();          // I2C Master (Uno)
+    Wire.begin();          // I2C Controller (Uno)
     Serial.begin(USB_BAUD);
     while (!Serial) {}
 
