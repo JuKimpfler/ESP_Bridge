@@ -10,13 +10,13 @@ Dieses Testprojekt verbindet zwei Arduino Unos **nicht direkt** miteinander, son
 ## Verdrahtung
 
 ```
-Uno A (i2c_master)         ESP A (I2C-Slave, ComMode=2)
+Uno A (i2c_sender)         ESP A (I2C-Peripheral, ComMode=2)
 ──────────────────         ─────────────────────────────
 A4 (SDA)             ────► GPIO6 (SDA)
 A5 (SCL)             ────► GPIO7 (SCL)
 GND                  ────► GND
 
-Uno B (i2c_slave)          ESP B (I2C-Slave, ComMode=2)
+Uno B (i2c_receiver)       ESP B (I2C-Peripheral, ComMode=2)
 ─────────────────          ─────────────────────────────
 A4 (SDA)             ────► GPIO6 (SDA)
 A5 (SCL)             ────► GPIO7 (SCL)
@@ -33,10 +33,8 @@ GND                  ────► GND
 
 | Datei | Funktion |
 |---|---|
-| `i2c_master/i2c_master.ino` | Uno A sendet zyklisch 10 Byte über Register `0x01` an ESP A und liest Register `0x02` |
-| `i2c_slave/i2c_slave.ino` | Uno B pollt Register `0x02` auf ESP B und sendet ACK über Register `0x01` zurück |
-
-> Hinweis: Die Dateinamen `i2c_master`/`i2c_slave` sind historisch; in der Bridge-Topologie arbeiten beide Unos als I2C-Master gegenüber ihrem lokalen ESP32.
+| `i2c_sender/i2c_sender.ino` | Uno A sendet zyklisch 10 Byte über Register `0x01` an ESP A und liest Register `0x02` |
+| `i2c_receiver/i2c_receiver.ino` | Uno B pollt Register `0x02` auf ESP B und sendet ACK über Register `0x01` zurück |
 
 **Standard-I2C-Adresse der Bridge:** `0x77` (7-Bit, entspricht `ET+I2CAddr=0xEE`)
 
@@ -50,12 +48,12 @@ GND                  ────► GND
    - `ET+ComMode=2`
    - optional `ET+I2CAddr=0xEE`
    - `ET+SAVE` (Neustart)
-3. `i2c_master.ino` auf **Uno A** hochladen.
-4. `i2c_slave.ino` auf **Uno B** hochladen.
+3. `i2c_sender.ino` auf **Uno A** hochladen.
+4. `i2c_receiver.ino` auf **Uno B** hochladen.
 5. Verdrahtung gemäß obiger Tabelle herstellen.
 6. Serial Monitor beider Unos bei **115200 Baud** öffnen.
 
-### Erwartete Ausgabe – Master (Uno A)
+### Erwartete Ausgabe – Sender (Uno A)
 
 ```
 ========================================
@@ -72,7 +70,7 @@ Register 0x01=TX  0x02=RX
 ...
 ```
 
-### Erwartete Ausgabe – Slave (Uno B)
+### Erwartete Ausgabe – Receiver (Uno B)
 
 ```
 ========================================
@@ -93,7 +91,7 @@ Polling Register 0x02 ...
 
 ## Technische Details
 
-- **Rolle beider Unos:** I2C-Master (`Wire.begin()`)
+- **Rolle beider Unos:** I2C-Controller (`Wire.begin()`)
 - **Bridge-Protokoll:** Register `0x01` (Write), Register `0x02` (Read), je **10 Byte**
 - **Bibliothek:** `Wire` (im Arduino-Core enthalten, kein zusätzlicher Download nötig)
 - **Sendeintervall Uno A:** 1 Sekunde
