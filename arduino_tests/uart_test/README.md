@@ -1,20 +1,28 @@
-# UART Test – Zwei Arduino Unos
+# UART Test – Zwei Arduino Unos über ESP32-Bridge (UART-Modus)
 
-Dieses Testprojekt lässt zwei Arduino Unos über **SoftwareSerial** (Software-UART) miteinander kommunizieren. Der Hardware-UART (Pin 0/1) bleibt für den Serial Monitor (USB-Verbindung zum PC) frei.
+Dieses Testprojekt verbindet zwei Arduino Unos **nicht direkt** miteinander, sondern über die ESP32-Bridge im **UART-Modus**.
+
+Auf beiden Unos wird dafür **SoftwareSerial** verwendet, damit der Hardware-UART (Pin 0/1) für den Serial Monitor frei bleibt.
 
 ---
 
 ## Verdrahtung
 
 ```
-Uno A (Sender)          Uno B (Empfänger)
-─────────────           ─────────────────
-Pin 10 (SW-TX) ──────→  Pin 11 (SW-RX)
-Pin 11 (SW-RX) ←──────  Pin 10 (SW-TX)
-GND            ──────── GND
+Uno A (uart_sender)         ESP A (ComMode=1 / UART)
+───────────────────         ─────────────────────────
+Pin 10 (SW-TX)        ────► GPIO20 (UART-RX)
+Pin 11 (SW-RX)        ◄──── GPIO21 (UART-TX)
+GND                   ────► GND
+
+Uno B (uart_receiver)       ESP B (ComMode=1 / UART)
+─────────────────────       ─────────────────────────
+Pin 10 (SW-TX)        ────► GPIO20 (UART-RX)
+Pin 11 (SW-RX)        ◄──── GPIO21 (UART-TX)
+GND                   ────► GND
 ```
 
-> **Hinweis:** Beide Unos können gleichzeitig per USB am PC angeschlossen sein – der Serial Monitor funktioniert auf beiden unabhängig.
+> Die beiden Unos werden **nicht** direkt per TX/RX miteinander verbunden.
 
 ---
 
@@ -29,19 +37,21 @@ GND            ──────── GND
 
 ## Inbetriebnahme
 
-1. `uart_receiver.ino` auf **Uno B** hochladen.
-2. `uart_sender.ino` auf **Uno A** hochladen.
-3. Verdrahtung gemäß obiger Tabelle herstellen.
-4. Serial Monitor beider Unos bei **115200 Baud** öffnen.
+1. Beide ESP32-C3 Module pairen (siehe Haupt-README, `ET+PEER`, `ET+SAVE`).
+2. Sicherstellen, dass beide ESPs im UART-Modus laufen (`ET+ComMode=1`).
+3. `uart_receiver.ino` auf **Uno B** hochladen.
+4. `uart_sender.ino` auf **Uno A** hochladen.
+5. Verdrahtung gemäß obiger Tabelle herstellen.
+6. Serial Monitor beider Unos bei **115200 Baud** öffnen.
 
 ### Erwartete Ausgabe – Sender (Uno A)
 
 ```
 ========================================
-  UART Test – Sender
+  UART Test – Sender via ESP Bridge
 ========================================
 SoftwareSerial TX=Pin10  RX=Pin11  @ 9600 Baud
-Warte auf Empfaenger …
+Warte auf Empfänger …
 
 [TX] PKT:1:TEST_DATA_1
 [RX] ACK:1:OK
@@ -54,7 +64,7 @@ Warte auf Empfaenger …
 
 ```
 ========================================
-  UART Test – Empfaenger
+  UART Test – Empfaenger via ESP Bridge
 ========================================
 SoftwareSerial TX=Pin10  RX=Pin11  @ 9600 Baud
 Warte auf Datenpakete …

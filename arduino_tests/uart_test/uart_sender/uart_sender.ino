@@ -1,20 +1,24 @@
 // ============================================================
-//  UART Test – Sender (Arduino Uno)
+//  UART Test – Sender (Arduino Uno via ESP32 Bridge)
 //  ============================================================
-//  Verdrahtung zwischen den beiden Unos:
-//    Sender Pin 10 (SW-TX)  →  Empfaenger Pin 11 (SW-RX)
-//    Sender Pin 11 (SW-RX)  →  Empfaenger Pin 10 (SW-TX)
-//    Sender GND             →  Empfaenger GND
+//  Verdrahtung Sender-Uno <-> lokales ESP32-C3 Bridge-Modul A:
+//    Sender Pin 10 (SW-TX)  -> ESP A GPIO20 (UART-RX)
+//    Sender Pin 11 (SW-RX)  <- ESP A GPIO21 (UART-TX)
+//    Sender GND             -> ESP A GND
 //
-//  Der Hardware-UART (Pin 0/1) bleibt fuer den Serial Monitor
-//  (USB-Verbindung zum PC) frei – kein Kabel-Umstecken noetig.
+//  Die Verbindung zum Empfaenger erfolgt drahtlos ueber das
+//  zweite ESP32-C3 Bridge-Modul B (ESP-NOW).
+//
+//  Der Hardware-UART (Pin 0/1) des Uno bleibt fuer den
+//  Serial Monitor frei, deshalb wird SoftwareSerial genutzt.
 //
 //  Bedienung:
 //    1. Sketch auf diesen Uno hochladen.
 //    2. Serial Monitor bei 115200 Baud oeffnen.
-//    3. Empfaenger-Sketch auf zweiten Uno laden und verbinden.
+//    3. Empfaenger-Sketch auf Uno B starten.
+//    4. Beide ESP32-Bridge-Module muessen gepairt sein.
 //    Der Sender schickt alle 1 s ein Testpaket und zeigt
-//    jede Antwort des Empfaengers im Serial Monitor an.
+//    Antworten vom entfernten Uno B an.
 // ============================================================
 
 #include <SoftwareSerial.h>
@@ -36,7 +40,7 @@ void setup() {
     swSerial.begin(SW_BAUD);
 
     Serial.println(F("========================================"));
-    Serial.println(F("  UART Test – Sender"));
+    Serial.println(F("  UART Test – Sender via ESP Bridge"));
     Serial.println(F("========================================"));
     Serial.print(F("SoftwareSerial TX=Pin10  RX=Pin11  @ "));
     Serial.print(SW_BAUD);
