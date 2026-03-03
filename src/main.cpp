@@ -270,7 +270,11 @@ void onDataRecv(const uint8_t *mac, const uint8_t *inData, int len) {
                 if (g_debugMode) {
                     Serial.print(F("[RX ESP-NOW->I2C] "));
                     Serial.print(pkt->dataLen);
-                    Serial.print(F(" B -> Buffer: "));
+                    if (offset > 0) {
+                        Serial.print(F(" B (gekuerzt auf letzte 10) -> Buffer: "));
+                    } else {
+                        Serial.print(F(" B -> Buffer: "));
+                    }
                     for (uint8_t i = 0; i < I2C_BUFFER_SIZE; i++) {
                         if (g_i2cBuffer[i] < 0x10) Serial.print('0');
                         Serial.print(g_i2cBuffer[i], HEX);
@@ -402,7 +406,11 @@ void onI2CReceive(int numBytes) {
         if (g_debugMode) {
             Serial.print(F("[I2C RX] 0x01 Write "));
             Serial.print(idx);
-            Serial.print(F(" B: "));
+            Serial.print(F(" B"));
+            if (idx < I2C_BUFFER_SIZE) {
+                Serial.print(F(" (erwartet 10)"));
+            }
+            Serial.print(F(": "));
             for (uint8_t i = 0; i < I2C_BUFFER_SIZE; i++) {
                 if (g_i2cBuffer[i] < 0x10) Serial.print('0');
                 Serial.print(g_i2cBuffer[i], HEX);
@@ -441,7 +449,9 @@ void onI2CRequest() {
 
 /** I2C Slave initialisieren */
 void initI2CSlave() {
-    // I2C-Adresse: Wenn > 0x77, als 8-Bit Adresse interpretieren (>> 1)
+    // ESP32 Wire.begin() erwartet 7-Bit Adresse.
+    // Falls die konfigurierte Adresse > 0x77 ist, wird sie als
+    // 8-Bit Adresse interpretiert und nach rechts verschoben (z.B. 0xEE -> 0x77).
     uint8_t addr7bit = g_i2cAddr;
     if (addr7bit > 0x77) {
         addr7bit = addr7bit >> 1;
@@ -788,7 +798,7 @@ void processCommand(const char *rawCmd) {
         const char *addrStr = body + 8;
         unsigned int addr = 0;
         // Akzeptiere sowohl "0xNN" als auch "NN" (hex)
-        if (addrStr[0] == '0' && (addrStr[1] == 'x' || addrStr[1] == 'X')) {
+        if (strlen(addrStr) >= 2 && addrStr[0] == '0' && (addrStr[1] == 'x' || addrStr[1] == 'X')) {
             sscanf(addrStr + 2, "%x", &addr);
         } else {
             sscanf(addrStr, "%x", &addr);
