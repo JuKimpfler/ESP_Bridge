@@ -1,27 +1,44 @@
 # ESP32-C3 UART-Bridge via ESP-NOW
 
-**Wireless UART-Brücke mit zwei Seeed Studio XIAO ESP32-C3 Modulen**
+**Drahtlose UART-Brücke mit zwei Seeed Studio XIAO ESP32-C3 Modulen**
 
 ---
 
 ## Inhaltsverzeichnis
 
-1. [Übersicht](#1-übersicht)
-2. [Hardware-Anforderungen](#2-hardware-anforderungen)
-3. [Pinbelegung](#3-pinbelegung)
-4. [Projektstruktur](#4-projektstruktur)
-5. [Installation & Flashen](#5-installation--flashen)
-6. [Erster Start & Pairing (Setup-Modus)](#6-erster-start--pairing-setup-modus)
-7. [AT-Befehlsreferenz](#7-at-befehlsreferenz)
-8. [Normaler Betrieb](#8-normaler-betrieb)
-9. [LED-Verhalten](#9-led-verhalten)
-10. [Leistung & Timing](#10-leistung--timing)
-11. [Hinweise & Besonderheiten](#11-hinweise--besonderheiten)
-12. [Fehlerbehebung](#12-fehlerbehebung)
+1. [Einleitung](#1-einleitung)
+2. [Übersicht](#2-übersicht)
+3. [Hardware-Anforderungen](#3-hardware-anforderungen)
+4. [Pinbelegung](#4-pinbelegung)
+5. [Projektstruktur](#5-projektstruktur)
+6. [Installation & Flashen](#6-installation--flashen)
+7. [Erster Start & Pairing (Setup-Modus)](#7-erster-start--pairing-setup-modus)
+8. [AT-Befehlsreferenz](#8-at-befehlsreferenz)
+9. [Normaler Betrieb](#9-normaler-betrieb)
+10. [LED-Verhalten](#10-led-verhalten)
+11. [Leistung & Timing](#11-leistung--timing)
+12. [Hinweise & Besonderheiten](#12-hinweise--besonderheiten)
+13. [Fehlerbehebung](#13-fehlerbehebung)
 
 ---
 
-## 1. Übersicht
+## 1. Einleitung
+
+Viele Mikrocontroller, Sensoren und eingebettete Systeme kommunizieren über eine serielle UART-Schnittstelle. Sollen zwei solcher Systeme drahtlos miteinander verbunden werden, ist üblicherweise eine vollständige WLAN-Infrastruktur (Router, TCP/IP-Stack usw.) notwendig – ein erheblicher Aufwand für eine einfache Punkt-zu-Punkt-Verbindung.
+
+**Die Grundidee dieses Projekts** ist denkbar einfach: Zwei ESP32-C3-Module bilden eine transparente, drahtlose UART-Brücke. Alles, was in die UART-Schnittstelle des einen Moduls gesendet wird, kommt auf der UART-Schnittstelle des anderen Moduls an – und umgekehrt. Für die angeschlossenen Geräte ist die Drahtlosverbindung vollständig transparent; sie „sehen" lediglich eine serielle Verbindung.
+
+Als Übertragungsprotokoll kommt **ESP-NOW** zum Einsatz – ein von Espressif entwickeltes, verbindungsloses Peer-to-Peer-Protokoll auf Basis von IEEE 802.11. ESP-NOW ermöglicht eine direkte Kommunikation zwischen zwei Modulen ohne Router oder WLAN-Infrastruktur, mit geringer Latenz (< 5 ms) und einer Reichweite von bis zu 100 Metern im Freifeld.
+
+**Typische Anwendungsfälle:**
+
+- Kabellose Verbindung zwischen zwei Mikrocontrollern (z. B. Arduino ↔ Raspberry Pi)
+- Drahtlose Verlängerung einer seriellen Schnittstelle (z. B. ein GPS-Modul im Außenbereich)
+- Einfacher Ersatz für ein physisches Serielle-Kabel in bestehenden Projekten, ohne Software-Anpassungen
+
+---
+
+## 2. Übersicht
 
 Dieses Projekt verbindet zwei XIAO ESP32-C3 Module drahtlos über **ESP-NOW** und bildet eine transparente **UART-Bridge**:
 
@@ -45,7 +62,7 @@ Gerät A ◄─(UART 115200)── ESP32-C3 [A] ◄─(ESP-NOW 2.4 GHz)── ES
 
 ---
 
-## 2. Hardware-Anforderungen
+## 3. Hardware-Anforderungen
 
 - 2× **Seeed Studio XIAO ESP32-C3**
 - 2× LED (z. B. 3 mm grün) + 2× LED (z. B. 3 mm gelb/rot)
@@ -55,7 +72,7 @@ Gerät A ◄─(UART 115200)── ESP32-C3 [A] ◄─(ESP-NOW 2.4 GHz)── ES
 
 ---
 
-## 3. Pinbelegung
+## 4. Pinbelegung
 
 > Die Pinbelegung ist für **beide** Module identisch.
 
@@ -88,12 +105,12 @@ GND ─────────────────────────�
 
 ---
 
-## 4. Projektstruktur
+## 5. Projektstruktur
 
 ```
-ESP_Com/
+ESP_Bridge/
 ├── platformio.ini          ← PlatformIO-Konfiguration
-├── Anleitung.md            ← Diese Datei
+├── README.md               ← Diese Dokumentation
 ├── include/
 │   └── config.h            ← Alle Konstanten & Pin-Definitionen
 └── src/
@@ -102,7 +119,7 @@ ESP_Com/
 
 ---
 
-## 5. Installation & Flashen
+## 6. Installation & Flashen
 
 ### Voraussetzungen
 
@@ -113,7 +130,7 @@ ESP_Com/
 
 ```bash
 # 1. Projekt öffnen
-# VS Code → Ordner öffnen → ESP_Com/
+# VS Code → Ordner öffnen → ESP_Bridge/
 
 # 2. Erstes Modul flashen
 pio run --target upload
@@ -133,7 +150,7 @@ pio run --target upload
 
 ---
 
-## 6. Erster Start & Pairing (Setup-Modus)
+## 7. Erster Start & Pairing (Setup-Modus)
 
 Da beide Module die **identische Firmware** haben, unterscheiden sie sich nur durch die gespeicherte Peer-MAC. Beim allerersten Start ist noch keine MAC gespeichert – deshalb muss einmal das **Pairing** durchgeführt werden.
 
@@ -175,7 +192,7 @@ GPIO5 HIGH → ET+PEER=AA:BB:CC:DD:EE:FF → ET+SAVE
 
 ---
 
-## 7. AT-Befehlsreferenz
+## 8. AT-Befehlsreferenz
 
 Alle Befehle werden per **USB-Serial** (Terminal) im Format `ET+BEFEHL` gesendet.  
 Zeilenendzeichen: `\n` oder `\r\n`
@@ -229,7 +246,7 @@ ET+SAVE
 
 ---
 
-## 8. Normaler Betrieb
+## 9. Normaler Betrieb
 
 Nach erfolgreichem Pairing und gespeicherter Peer-MAC läuft die Bridge vollautomatisch:
 
@@ -253,7 +270,7 @@ Externe Quelle sendet 20 Byte alle 10 ms:
 
 ---
 
-## 9. LED-Verhalten
+## 10. LED-Verhalten
 
 | LED          | GPIO | Zustand             | Bedeutung                     |
 |--------------|------|---------------------|-------------------------------|
@@ -264,7 +281,7 @@ Externe Quelle sendet 20 Byte alle 10 ms:
 
 ---
 
-## 10. Leistung & Timing
+## 11. Leistung & Timing
 
 ### Theoretische Grenzwerte
 
@@ -288,10 +305,10 @@ Externe Quelle sendet 20 Byte alle 10 ms:
 
 ---
 
-## 11. Hinweise & Besonderheiten
+## 12. Hinweise & Besonderheiten
 
 ### GPIO 9 = BOOT-Taste
-Der XIAO ESP32-C3 hat auf GPIO 9 den eingebauten BOOT-Button. Eine LED daran **stört den Normalbetrieb nicht**, kann aber beim Flashen (wenn man GPIO 9 gedrückt hält) zu Problemen führen. Im Zweifelsfall LED-Widerstand vor dem Flashen kurz unterbrechen.
+Der XIAO ESP32-C3 hat auf GPIO 9 den eingebauten BOOT-Button. Eine LED daran **stört den Normalbetrieb nicht**, kann aber beim Flashen (wenn GPIO 9 gedrückt gehalten wird) zu Problemen führen. Im Zweifelsfall den LED-Vorwiderstand vor dem Flashen kurz unterbrechen.
 
 ### ESP-NOW & WiFi-Kanal
 Beide ESPs **müssen auf demselben Kanal** arbeiten. Standard: Kanal 1. Änderung per `ET+CHANNEL=N` + `ET+SAVE` + Neustart. Wird der gleiche Kanal verwendet wie ein verbundenes WiFi-Netzwerk, kann die Performance leicht sinken.
@@ -307,7 +324,7 @@ Der XIAO ESP32-C3 hat eine externe PCB-Antenne. Für maximale Reichweite Module 
 
 ---
 
-## 12. Fehlerbehebung
+## 13. Fehlerbehebung
 
 | Problem                          | Mögliche Ursache                     | Lösung                                       |
 |----------------------------------|--------------------------------------|----------------------------------------------|
