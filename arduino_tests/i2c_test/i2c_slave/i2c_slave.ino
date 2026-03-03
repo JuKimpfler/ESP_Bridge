@@ -1,5 +1,5 @@
 // ============================================================
-//  I2C Test – Uno B (ueber ESP32 Bridge, I2C-Modus)
+//  I2C Test – Uno B (über ESP32 Bridge, I2C-Modus)
 //  ============================================================
 //  Dieser Uno ist I2C-Master und spricht mit seinem lokalen
 //  ESP32-C3 (Bridge-Modul B) als I2C-Slave:

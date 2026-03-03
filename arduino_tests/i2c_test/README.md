@@ -36,6 +36,8 @@ GND                  ────► GND
 | `i2c_master/i2c_master.ino` | Uno A sendet zyklisch 10 Byte über Register `0x01` an ESP A und liest Register `0x02` |
 | `i2c_slave/i2c_slave.ino` | Uno B pollt Register `0x02` auf ESP B und sendet ACK über Register `0x01` zurück |
 
+> Hinweis: Die Dateinamen `i2c_master`/`i2c_slave` sind historisch; in der Bridge-Topologie arbeiten beide Unos als I2C-Master gegenüber ihrem lokalen ESP32.
+
 **Standard-I2C-Adresse der Bridge:** `0x77` (7-Bit, entspricht `ET+I2CAddr=0xEE`)
 
 ---
