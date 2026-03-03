@@ -8,7 +8,6 @@
 // ------------------------------------------------------------
 //  Pin-Belegung  (Seeed Studio XIAO ESP32-C3)
 // ------------------------------------------------------------
-#define PIN_SETUP_MODE      5   // HIGH  → Setup-Modus aktiv (externes Signal)
 #define PIN_LED_CONNECTED   9   // LED Verbindungsstatus  (ACHTUNG: GPIO9 = BOOT-Taste!)
 #define PIN_LED_SETUP       10  // LED Setup-Modus aktiv
 
@@ -28,7 +27,7 @@
 // ------------------------------------------------------------
 //  ESP-NOW Einstellungen
 // ------------------------------------------------------------
-#define ESPNOW_CHANNEL      1           // WiFi-Kanal (1–13), beide müssen gleich sein
+#define ESPNOW_CHANNEL      6           // WiFi-Kanal (1–13), beide müssen gleich sein
 #define ESPNOW_MAX_PAYLOAD  240         // Nutzlast pro Paket (max 250 – Header)
 #define ESPNOW_SEND_RETRIES 3           // Wiederholungen bei Sendefehler
 
