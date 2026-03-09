@@ -85,6 +85,7 @@ void onDataRecv(const uint8_t *mac, const uint8_t *inData, int len) {
 void setup() {
     Serial.begin(USB_SERIAL_BAUD);
     Serial.setTxTimeoutMs(0);
+    while(!Serial.available()){}
     delay(6000);
 
     // LED-Pins (optional, Status-Anzeige)
