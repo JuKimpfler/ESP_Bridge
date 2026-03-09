@@ -110,14 +110,8 @@ class DataManager:
                     entry["max"] = value
             elif dtype == "bool":
                 entry["values"].append(1 if value else 0)
-                if entry["min"] is None:
-                    entry["min"] = False
-                if entry["max"] is None:
-                    entry["max"] = True
-                if value and entry["max"] is not True:
-                    entry["max"] = True
-                if not value and entry["min"] is not False:
-                    entry["min"] = False
+                entry["min"] = False
+                entry["max"] = True
             else:
                 entry["values"].append(value)
                 entry["min"] = "-"
@@ -530,16 +524,13 @@ class MonitorApp(tk.Tk):
                 messagebox.showwarning("Kein Port",
                                        "Bitte wählen Sie einen seriellen Port.")
                 return
+            # Create a fresh reader thread (threads cannot be restarted)
+            self.reader = SerialReader(self.dm)
             err = self.reader.connect(port, baud)
             if err:
                 messagebox.showerror("Verbindungsfehler", err)
                 return
-            if not self.reader.is_alive():
-                self.reader = SerialReader(self.dm)
-                self.reader.connect(port, baud)
-                self.reader.start()
-            else:
-                self.reader.start()
+            self.reader.start()
             self.connect_btn.configure(text="Trennen")
             self.status_lbl.configure(text="● Verbunden", foreground=ACCENT2)
 
