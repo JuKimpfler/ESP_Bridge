@@ -1,6 +1,6 @@
 # ESP32-C3 UART Bridge via ESP-NOW
 
-**Wireless UART bridge using two Seeed Studio XIAO ESP32-C3 modules**
+**Wireless UART bridge using two Seeed Studio XIAO ESP32-C3 modules with optional debug monitor**
 
 > 🇩🇪 Eine deutsche Version dieser Dokumentation ist in [README.md](README.md) verfügbar.
 
@@ -17,12 +17,13 @@
 7. [First Start & Pairing (Setup Mode)](#7-first-start--pairing-setup-mode)
 8. [AT Command Reference](#8-at-command-reference)
 9. [Normal Operation](#9-normal-operation)
-10. [LED Behavior](#10-led-behavior)
-11. [Performance & Timing](#11-performance--timing)
-12. [Dual-Port Operation](#12-dual-port-operation)
-13. [Automated Test Script](#13-automated-test-script)
-14. [Notes & Particularities](#14-notes--particularities)
-15. [Troubleshooting](#15-troubleshooting)
+10. [Debug Monitor (Third ESP)](#10-debug-monitor-third-esp)
+11. [LED Behavior](#11-led-behavior)
+12. [Performance & Timing](#12-performance--timing)
+13. [Dual-Port Operation](#13-dual-port-operation)
+14. [Automated Test Script](#14-automated-test-script)
+15. [Notes & Particularities](#15-notes--particularities)
+16. [Troubleshooting](#16-troubleshooting)
 
 ---
 
@@ -52,11 +53,35 @@ Device A ──(UART 115200)──► ESP32-C3 [A] ──(ESP-NOW 2.4 GHz)──
 Device A ◄─(UART 115200)── ESP32-C3 [A] ◄─(ESP-NOW 2.4 GHz)── ESP32-C3 [B] ◄─(UART 115200)── Device B
 ```
 
+### Debug Monitor (optional)
+
+A **third ESP32-C3** can be connected to a PC via USB as a debug monitor.
+Both bridge ESPs can send debug data to the monitor — the normal bridge communication is **not** affected:
+
+```
+Robot A ──(UART)──► ESP32 [A] ══(ESP-NOW)══ ESP32 [B] ◄──(UART)── Robot B
+                       ║                        ║
+                  (PKT_DEBUG)              (PKT_DEBUG)
+                       ║                        ║
+                       ╚════════╗   ╔═══════════╝
+                                ▼   ▼
+                         ESP32 [Debug Monitor]
+                                │
+                            USB-Serial
+                                │
+                                ▼
+                               PC
+```
+
+- Debug data flows **only** from robots to PC (not vice versa)
+- The debug feature is **toggleable** (`ET+DBGMON`)
+- The existing bridge communication is **not affected**
+
 ### Features
 
 | Feature                   | Value                                          |
 |---------------------------|------------------------------------------------|
-| Firmware version          | v1.1                                           |
+| Firmware version          | v1.2                                           |
 | Protocol                  | ESP-NOW (IEEE 802.11, no router required)      |
 | Range                     | ~100 m (open space), ~20–50 m (indoors)        |
 | UART baud rate            | 115200 baud                                    |
@@ -69,17 +94,20 @@ Device A ◄─(UART 115200)── ESP32-C3 [A] ◄─(ESP-NOW 2.4 GHz)── ES
 | Settings storage          | NVS (internal flash, no external EEPROM)       |
 | Dual-port                 | Yes (USB-CDC + HW-UART fully equivalent)       |
 | Debug mode                | Yes (toggle with `ET+DEBUG`)                   |
+| Debug monitor             | Yes (third ESP, toggle with `ET+DBGMON`)       |
 
 ---
 
 ## 3. Hardware Requirements
 
-- 2× **Seeed Studio XIAO ESP32-C3**
+- 2× **Seeed Studio XIAO ESP32-C3** (bridge modules)
+- 1× **Seeed Studio XIAO ESP32-C3** (debug monitor, optional)
 - 2× LED (e.g. 3 mm green, for connection status) + 2× LED (e.g. 3 mm yellow/red, for setup mode)
 - 4× series resistor 220–330 Ω
 - USB-C cable (for flashing and debugging)
 
-> **Note:** Setup mode can also be activated via the software command `ET+OPEN`, so an external hardware input on GPIO 5 is entirely optional.
+> **Note:** The debug monitor ESP only requires a USB-C cable to the PC. No additional hardware (LEDs, resistors) is required.
+> Setup mode can also be activated via the software command `ET+OPEN`, so an external hardware input on GPIO 5 is entirely optional.
 
 ---
 
@@ -115,14 +143,18 @@ GND ─────────────────────────�
 
 ```
 ESP_Bridge/
-├── platformio.ini          ← PlatformIO configuration
+├── platformio.ini          ← PlatformIO configuration (bridge + debug monitor)
 ├── README.md               ← German documentation
 ├── README_EN.md            ← This file (English documentation)
+├── BL.h                    ← Teensy robot: role/debug class (header)
+├── BL.cpp                  ← Teensy robot: role/debug class (implementation)
 ├── test_bridge.py          ← Automated test and pairing script (Python)
 ├── include/
 │   └── config.h            ← All constants and pin definitions
-└── src/
-    └── main.cpp            ← Complete firmware (identical for both modules)
+├── src/
+│   └── main.cpp            ← Bridge firmware (identical for both bridge modules)
+└── src_debug/
+    └── main.cpp            ← Debug monitor firmware (third ESP, USB to PC)
 ```
 
 ---
@@ -140,14 +172,18 @@ ESP_Bridge/
 # 1. Open the project
 # VS Code → Open Folder → ESP_Bridge/
 
-# 2. Flash the first module
+# 2. Flash the first bridge module
 pio run --target upload
 
-# 3. Connect the second module and flash again
+# 3. Connect the second bridge module and flash again
 pio run --target upload
 
-# 4. Open the serial monitor (115200 baud)
-pio device monitor
+# 4. Flash the debug monitor ESP (third ESP)
+pio run -e debug_monitor --target upload
+
+# 5. Open the serial monitor (115200 baud)
+pio device monitor                          # Bridge module
+pio device monitor -e debug_monitor         # Debug monitor
 ```
 
 ### With Arduino IDE
@@ -224,6 +260,7 @@ Format: `ET+COMMAND` — line ending: `\n` or `\r\n`
 | `ET+MAC?`                    | –              | Display own MAC address                                 |
 | `ET+STATUS?`                 | –              | Display full status                                     |
 | `ET+DEBUG`                   | –              | Toggle debug output on/off                              |
+| `ET+DBGMON`                  | –              | Toggle debug monitor on/off (send to 3rd ESP)           |
 | `ET+SCAN`                    | ✓              | Start a 5-second scan for ESP-NOW peers                 |
 | `ET+LIST`                    | ✓              | Show results of the last scan                           |
 | `ET+SELECT=N`                | ✓              | Select peer number N from the scan list                 |
@@ -233,7 +270,7 @@ Format: `ET+COMMAND` — line ending: `\n` or `\r\n`
 | `ET+RESET`                   | ✓              | Delete peer MAC address and all settings                |
 | `ET+SAVE`                    | ✓              | Save settings to flash and exit setup mode              |
 
-> **Note:** The commands `ET+OPEN`, `ET+MAC?`, `ET+STATUS?`, and `ET+DEBUG` are **always** available, regardless of the current mode. All other commands require setup mode (activated via `ET+OPEN`).
+> **Note:** The commands `ET+OPEN`, `ET+MAC?`, `ET+STATUS?`, `ET+DEBUG`, and `ET+DBGMON` are **always** available, regardless of the current mode. All other commands require setup mode (activated via `ET+OPEN`).
 
 ### Example Session
 
@@ -316,7 +353,83 @@ External source sends 20 bytes every 10 ms:
 
 ---
 
-## 10. LED Behavior
+## 10. Debug Monitor (Third ESP)
+
+The debug monitor allows receiving debug data from both robots on a PC without affecting the normal bridge communication.
+
+### Concept
+
+- A **third ESP32-C3** is connected to a PC via USB
+- Both bridge ESPs send debug data via **ESP-NOW broadcast** (`PKT_DEBUG`)
+- The debug monitor receives these packets and outputs them on the **USB serial console**
+- Data flow is **unidirectional**: robots → PC only (not vice versa)
+- The debug feature is **toggleable** via `ET+DBGMON` on the bridge ESPs
+- The existing bridge communication is **not affected**
+
+### Setup
+
+1. **Flash the debug monitor:**
+   ```bash
+   pio run -e debug_monitor --target upload
+   ```
+
+2. **Enable the debug monitor** (on both bridge ESPs):
+   ```
+   ET+DBGMON
+   [DBGMON] Debug-Monitor: AN
+   ```
+
+3. **Open the monitor:**
+   ```bash
+   pio device monitor -e debug_monitor
+   ```
+
+### Sending Debug Data from Teensy (BL.h / BL.cpp)
+
+The `BLC` class provides the `sendDebug()` method to send debug data from the Teensy robot through the UART bridge to the debug monitor:
+
+```cpp
+// Send a debug message
+BL.sendDebug("Ball Angle: " + String(Ball.Angle));
+BL.sendDebug("Distance: " + String(Ball.Distance));
+BL.sendDebug("Rolle: " + BL.Rolle);
+
+// Enable/disable debug output
+BL.setDebugEnabled(true);   // enable
+BL.setDebugEnabled(false);  // disable
+```
+
+### Protocol
+
+Debug messages are sent with the prefix `DBG:` over the UART connection:
+
+```
+DBG:Ball Angle: 180\n
+```
+
+The ESP bridge recognizes this prefix and:
+- Does **not** forward the message to the peer robot (not bridge data)
+- Instead sends it as a `PKT_DEBUG` via ESP-NOW broadcast
+- The debug monitor receives the packet and displays it with the source MAC:
+
+```
+[34:94:54:AB:CD:EF] Ball Angle: 180
+[34:94:54:11:22:33] Distance: 42
+```
+
+### Disabling the Debug Monitor
+
+On the bridge ESPs:
+```
+ET+DBGMON
+[DBGMON] Debug-Monitor: AUS
+```
+
+The setting is saved in NVS and persists across reboots.
+
+---
+
+## 11. LED Behavior
 
 | LED              | GPIO | State               | Meaning                        |
 |------------------|------|---------------------|--------------------------------|
@@ -327,7 +440,7 @@ External source sends 20 bytes every 10 ms:
 
 ---
 
-## 11. Performance & Timing
+## 12. Performance & Timing
 
 ### Theoretical Limits
 
@@ -354,7 +467,7 @@ External source sends 20 bytes every 10 ms:
 
 ---
 
-## 12. Dual-Port Operation
+## 13. Dual-Port Operation
 
 A key feature of this firmware is **fully symmetrical dual-port operation**: both interfaces — USB-CDC (`Serial`) and hardware UART (`Serial1`) — are treated entirely in parallel.
 
@@ -370,7 +483,7 @@ This means a connected device can send `ET+` commands directly over the hardware
 
 ---
 
-## 13. Automated Test Script
+## 14. Automated Test Script
 
 The included Python script `test_bridge.py` connects to both modules simultaneously via USB-Serial, reads boot output, performs the pairing procedure automatically, and verifies the connection.
 
@@ -402,7 +515,7 @@ python test_bridge.py
 
 ---
 
-## 14. Notes & Particularities
+## 15. Notes & Particularities
 
 ### GPIO 9 = BOOT Button
 The XIAO ESP32-C3 has its built-in BOOT button on GPIO 9. An LED connected here **does not interfere with normal operation**, but may cause problems during flashing if GPIO 9 is held high by an external circuit. If in doubt, disconnect the LED's series resistor before flashing and reconnect it afterwards.
@@ -425,9 +538,12 @@ If the buffered UART data exceeds 240 bytes, it is automatically split into mult
 ### Debug Mode
 Debug mode can be toggled at any time using `ET+DEBUG` — even during normal operation. When enabled, detailed information about sent and received packets is printed, including hex dumps of the first 16 bytes of each payload.
 
+### Debug Monitor
+The debug monitor (`ET+DBGMON`) allows sending debug data to a third ESP connected to a PC via USB. See [Section 10](#10-debug-monitor-third-esp) for details.
+
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 | Problem                               | Possible Cause                             | Solution                                                       |
 |---------------------------------------|--------------------------------------------|----------------------------------------------------------------|
@@ -438,5 +554,7 @@ Debug mode can be toggled at any time using `ET+DEBUG` — even during normal op
 | Modules do not connect                | Different Wi-Fi channels configured        | Run `ET+STATUS?` on both modules and compare the channel       |
 | High data latency                     | `SEND_INTERVAL_MS` too large               | Reduce to 2–3 ms in `config.h`                                 |
 | Flash settings lost                   | Firmware re-flashed                        | Repeat pairing: `ET+OPEN` → `ET+SCAN` → `ET+SAVE`             |
-| Commands not recognized               | Not in setup mode                          | Send `ET+OPEN` first (exceptions: `ET+MAC?`, `ET+STATUS?`, `ET+DEBUG`) |
+| Commands not recognized               | Not in setup mode                          | Send `ET+OPEN` first (exceptions: `ET+MAC?`, `ET+STATUS?`, `ET+DEBUG`, `ET+DBGMON`) |
 | Connection drops repeatedly           | Poor reception / channel interference      | Change to a different channel using `ET+CHANNEL=N` on both modules |
+| Debug monitor receives no data        | Debug monitor not enabled                  | Send `ET+DBGMON` on both bridge ESPs                           |
+| Debug monitor receives no data        | Wrong Wi-Fi channel                        | All three ESPs must be on the same channel                     |

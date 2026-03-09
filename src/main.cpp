@@ -61,6 +61,9 @@ bool     g_peerStored    = false;
 // --- Debug-Modus ---
 volatile bool g_debugMode = false;
 
+// --- Debug-Monitor (dritter ESP fuer PC-Ausgabe) ---
+volatile bool g_debugMonitorEnabled = false;
+
 // --- MAC-Adressen ---
 uint8_t  g_myMac[6]        = {0};
 uint8_t  g_peerMac[6]      = {0};
@@ -155,7 +158,7 @@ bool strToMac(const char *str, uint8_t *mac) {
 /** Gibt den aktuellen Status aus (auf beide Ausgaenge) */
 void printStatus() {
     cmdPrintln(F("=== ESP-NOW UART Bridge - Status ==="));
-    cmdPrint  (F("  Firmware:      ")); cmdPrintln(F("v1.1"));
+    cmdPrint  (F("  Firmware:      ")); cmdPrintln(F("v1.2"));
     cmdPrint  (F("  Eigene MAC:    ")); cmdPrintln(macToStr(g_myMac));
     cmdPrint  (F("  Peer MAC:      "));
     if (g_peerStored) cmdPrintln(macToStr(g_peerMac));
@@ -165,6 +168,7 @@ void printStatus() {
     cmdPrint  (F("  WiFi-Kanal:    ")); cmdPrintln(ESPNOW_CHANNEL);
     cmdPrint  (F("  UART Baud:     ")); cmdPrintln(HW_UART_BAUD);
     cmdPrint  (F("  Debug:         ")); cmdPrintln(g_debugMode     ? F("AN") : F("AUS"));
+    cmdPrint  (F("  Debug-Monitor: ")); cmdPrintln(g_debugMonitorEnabled ? F("AN") : F("AUS"));
     cmdPrintln(F("===================================="));
 }
 
@@ -377,6 +381,11 @@ void loadSettings() {
     } else {
         dbgPrintln(F("[NVS] Kein Peer gespeichert."));
     }
+    if (prefs.isKey(NVS_KEY_DBGMON)) {
+        g_debugMonitorEnabled = (prefs.getUChar(NVS_KEY_DBGMON, 0) != 0);
+        dbgPrint(F("[NVS] Debug-Monitor: "));
+        dbgPrintln(g_debugMonitorEnabled ? F("AN") : F("AUS"));
+    }
     prefs.end();
 }
 
@@ -423,6 +432,7 @@ void enterSetupMode() {
     cmdPrintln(F("  ET+RESET         - Peer-Einstellungen loeschen"));
     cmdPrintln(F("  ET+SAVE          - Speichern & Setup beenden"));
     cmdPrintln(F("  ET+Debug         - Debug-Ausgaben umschalten"));
+    cmdPrintln(F("  ET+DBGMON        - Debug-Monitor ein-/ausschalten"));
     cmdPrintln(F("========================================="));
 }
 
@@ -509,7 +519,8 @@ void processCommand(const char *rawCmd) {
     bool isAlwaysAllowed = (strncmp(cmd, "ET+STATUS?", 10) == 0 ||
                             strncmp(cmd, "ET+MAC?",     7) == 0 ||
                             strncmp(cmd, "ET+OPEN",     7) == 0 ||
-                            strncasecmp(cmd, "ET+DEBUG",  8) == 0);
+                            strncasecmp(cmd, "ET+DEBUG",  8) == 0 ||
+                            strncasecmp(cmd, "ET+DBGMON", 9) == 0);
 
     if (!g_setupMode && !isAlwaysAllowed) {
         cmdPrintln(F("[CMD] Nicht im Setup-Modus. ET+OPEN eingeben."));
@@ -528,6 +539,18 @@ void processCommand(const char *rawCmd) {
         g_debugMode = !g_debugMode;
         cmdPrint(F("[DEBUG] Debug-Modus: "));
         cmdPrintln(g_debugMode ? F("AN") : F("AUS"));
+        return;
+    }
+
+    // ---- ET+DBGMON (case-insensitive) ----
+    if (strcasecmp(body, "DBGMON") == 0) {
+        g_debugMonitorEnabled = !g_debugMonitorEnabled;
+        // In NVS speichern
+        prefs.begin(NVS_NAMESPACE, false);
+        prefs.putUChar(NVS_KEY_DBGMON, g_debugMonitorEnabled ? 1 : 0);
+        prefs.end();
+        cmdPrint(F("[DBGMON] Debug-Monitor: "));
+        cmdPrintln(g_debugMonitorEnabled ? F("AN") : F("AUS"));
         return;
     }
 
@@ -668,10 +691,38 @@ void sendEspNow(const uint8_t *data, uint16_t totalLen) {
 }
 
 // ============================================================
+//  Debug-Daten per ESP-NOW Broadcast senden (-> Debug-Monitor)
+//
+//  Sendet PKT_DEBUG Pakete als Broadcast. Der Debug-Monitor-ESP
+//  empfaengt diese und gibt sie per USB-Serial an den PC aus.
+//  Die normale Bridge-Kommunikation wird nicht gestoert.
+// ============================================================
+void sendDebugBroadcast(const uint8_t *data, uint16_t totalLen) {
+    if (!g_debugMonitorEnabled) return;
+
+    uint16_t offset = 0;
+    while (offset < totalLen) {
+        EspNowPacket pkt = {};
+        pkt.type    = PKT_DEBUG;
+        pkt.seq     = g_txSeq++;
+        uint16_t chunk = min((uint16_t)ESPNOW_MAX_PAYLOAD, (uint16_t)(totalLen - offset));
+        pkt.dataLen = chunk;
+        memcpy(pkt.data, data + offset, chunk);
+
+        esp_now_send(g_broadcastMac,
+                     reinterpret_cast<uint8_t*>(&pkt),
+                     PKT_HEADER_SIZE + chunk);
+
+        offset += chunk;
+        if (offset < totalLen) delayMicroseconds(400);
+    }
+}
+
+// ============================================================
 //  Eingabe-Stream lesen (fuer USB und HW-UART gleichermassen)
 //
-//  Erkennt ET+ Befehle, leitet sonstige Daten in den
-//  gemeinsamen Bridge-Puffer (g_bridgeBuf).
+//  Erkennt ET+ Befehle und DBG: Debug-Nachrichten, leitet
+//  sonstige Daten in den gemeinsamen Bridge-Puffer (g_bridgeBuf).
 // ============================================================
 void readInputStream(Stream &input, char *cmdBuf, uint8_t &cmdLen, uint32_t &cmdLastMs) {
     while (input.available()) {
@@ -684,7 +735,13 @@ void readInputStream(Stream &input, char *cmdBuf, uint8_t &cmdLen, uint32_t &cmd
                 // Pruefen ob Kommando (ET+...)
                 if (cmdLen >= 3 && cmdBuf[0] == 'E' && cmdBuf[1] == 'T' && cmdBuf[2] == '+') {
                     processCommand(cmdBuf);
-                } else {
+                }
+                // Pruefen ob Debug-Nachricht (DBG:...)
+                else if (cmdLen >= 4 && cmdBuf[0] == 'D' && cmdBuf[1] == 'B' && cmdBuf[2] == 'G' && cmdBuf[3] == ':') {
+                    // Debug-Daten an den Debug-Monitor senden (nicht in Bridge-Puffer!)
+                    sendDebugBroadcast(reinterpret_cast<uint8_t*>(cmdBuf + 4), cmdLen - 4);
+                }
+                else {
                     // Kein Kommando -> in Bridge-Puffer uebernehmen
                     for (uint8_t i = 0; i < cmdLen; i++) {
                         if (g_bridgeBufLen < UART_RX_BUF_SIZE) {
@@ -702,14 +759,20 @@ void readInputStream(Stream &input, char *cmdBuf, uint8_t &cmdLen, uint32_t &cmd
             if (cmdLen < CMD_BUF_SIZE - 1) {
                 cmdBuf[cmdLen++] = c;
 
-                // Fruehe Erkennung: Sobald klar ist, dass es kein ET+ Praefix ist,
+                // Fruehe Erkennung: Sobald klar ist, dass es weder ET+ noch DBG: ist,
                 // sofort in den Bridge-Puffer uebertragen (geringe Latenz)
                 bool couldBeCmd = true;
                 if (cmdLen >= 1 && cmdBuf[0] != 'E') couldBeCmd = false;
                 if (couldBeCmd && cmdLen >= 2 && cmdBuf[1] != 'T') couldBeCmd = false;
                 if (couldBeCmd && cmdLen >= 3 && cmdBuf[2] != '+') couldBeCmd = false;
 
-                if (!couldBeCmd) {
+                bool couldBeDbg = true;
+                if (cmdLen >= 1 && cmdBuf[0] != 'D') couldBeDbg = false;
+                if (couldBeDbg && cmdLen >= 2 && cmdBuf[1] != 'B') couldBeDbg = false;
+                if (couldBeDbg && cmdLen >= 3 && cmdBuf[2] != 'G') couldBeDbg = false;
+                if (couldBeDbg && cmdLen >= 4 && cmdBuf[3] != ':') couldBeDbg = false;
+
+                if (!couldBeCmd && !couldBeDbg) {
                     for (uint8_t i = 0; i < cmdLen; i++) {
                         if (g_bridgeBufLen < UART_RX_BUF_SIZE) {
                             g_bridgeBuf[g_bridgeBufLen++] = (uint8_t)cmdBuf[i];
@@ -842,7 +905,7 @@ void setup() {
     // Debug-Meldungen beim Start (nur sichtbar wenn Debug aktiv)
     dbgPrintln();
     dbgPrintln(F("========================================="));
-    dbgPrintln(F("  ESP32-C3 UART-Bridge via ESP-NOW v1.1"));
+    dbgPrintln(F("  ESP32-C3 UART-Bridge via ESP-NOW v1.2"));
     dbgPrintln(F("========================================="));
     dbgPrintln(F("[INFO] Hardware-UART (Serial1) bereit"));
     dbgPrint  (F("[INFO] RX: GPIO")); dbgPrint  (HW_UART_RX_PIN);
@@ -865,6 +928,8 @@ void setup() {
     g_lastRxMs = millis();
 
     dbgPrintln(F("[INFO] Normaler Betrieb. ET+OPEN -> Setup | ET+Debug -> Debug"));
+    dbgPrint  (F("[INFO] Debug-Monitor: "));
+    dbgPrintln(g_debugMonitorEnabled ? F("AN") : F("AUS"));
 }
 
 // ============================================================

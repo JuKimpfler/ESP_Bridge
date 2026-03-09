@@ -63,6 +63,12 @@
 #define PKT_DISC_RESP       0x03        // Antwort auf Discovery
 #define PKT_HEARTBEAT       0x04        // Verbindungs-Keepalive
 #define PKT_HEARTBEAT_ACK   0x05        // Antwort auf Heartbeat
+#define PKT_DEBUG           0x06        // Debug-Daten (Roboter -> Debug-Monitor)
+
+// ------------------------------------------------------------
+//  Debug-Monitor (dritter ESP fuer PC-Debug-Ausgabe)
+// ------------------------------------------------------------
+#define NVS_KEY_DBGMON      "dbgmon"    // NVS-Schluessel: Debug-Monitor aktiv (uint8)
 
 // ------------------------------------------------------------
 //  Heartbeat
