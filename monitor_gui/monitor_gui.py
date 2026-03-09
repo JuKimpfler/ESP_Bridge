@@ -7,7 +7,7 @@ Reads serial output from the ESP32-C3 Debug Monitor and displays
 data in tables and live graphs, categorized by robot.
 
 Expected serial input format: [MAC_ADDRESS] key: value
-"""
+""" 
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox

@@ -18,7 +18,7 @@
 #define HW_UART_RX_PIN      20
 #define HW_UART_TX_PIN      21
 #define HW_UART_BAUD        115200
-
+ 
 // ------------------------------------------------------------
 //  USB-CDC Serial (Debuggen / Befehle)
 // ------------------------------------------------------------
@@ -54,6 +54,11 @@
 #define NVS_KEY_PEER_MAC    "peer_mac"
 #define NVS_KEY_CHANNEL     "channel"
 #define NVS_KEY_BAUD        "uart_baud"
+
+// ------------------------------------------------------------
+//  Paket-Header
+// ------------------------------------------------------------
+#define PKT_HEADER_SIZE     5           // type(1) + seq(2) + dataLen(2)
 
 // ------------------------------------------------------------
 //  Paket-Typen
