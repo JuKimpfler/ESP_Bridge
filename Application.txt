@@ -11,6 +11,10 @@ Remote_controll:
 Calibbration
 	Befehlflags:
 		- "Mode" + Value[String]
+		-> Mögliche strings :
+			- "IR_Calib"
+			- "Line_Calib_with"
+			- "
 		- "Turn" + Value[int]
 		- "Stop" 
 Game
