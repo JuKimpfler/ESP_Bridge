@@ -1,0 +1,18 @@
+Application: 
+Ich will eine vollständige Debug application mit local Website zur kontrolle
+
+Mode :
+Remote_controll:
+	Befehlflags:
+		- "Drive" + Value[int]
+		- "Turn" + Value[int]
+		- "Stop" 
+
+Calibbration
+	Befehlflags:
+		- "Mode" + Value[String]
+		- "Turn" + Value[int]
+		- "Stop" 
+Game
+
+
